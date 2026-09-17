@@ -145,7 +145,12 @@ jobs:
             CC="$GCC64/aarch64-linux-android-gcc" \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            -j"$(nproc)"
+            -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+
+      - name: Show errors on failure
+        if: failure()
+        run: |
+          grep -nE "error:|Error [0-9]+" "$GITHUB_WORKSPACE/build.log" | head -50 || true
 
       - name: Locate kernel image
         id: img
