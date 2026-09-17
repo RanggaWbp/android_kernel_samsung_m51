@@ -130,6 +130,16 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             "$DEFCONFIG"
 
+          # FORTIFY_SOURCE false-positive di GCC 4.9 (bug __builtin_object_size
+          # pada fungsi yang di-clone/inline oleh compiler) -> matikan.
+          ./scripts/config --file out/.config -d FORTIFY_SOURCE
+          make O=out ARCH=arm64 \
+            HOSTCFLAGS="-fcommon" \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            olddefconfig
+          grep FORTIFY out/.config || true
+
           make O=out ARCH=arm64 \
             HOSTCFLAGS="-fcommon" \
             CC="$GCC64/aarch64-linux-android-gcc" \
