@@ -46,14 +46,14 @@ jobs:
           W="scripts/gcc-wrapper.py"
           if [ -f "$W" ]; then
             python3 - "$W" <<'PYEOF'
-import re, sys
-p = sys.argv[1]
-s = open(p, encoding="utf-8", errors="ignore").read()
-s = s.replace("#!/usr/bin/env python2", "#!/usr/bin/env python3")
-s = re.sub(r'print\s+(.+)$', lambda m: f'print({m.group(1)})', s, flags=re.MULTILINE)
-open(p, "w", encoding="utf-8").write(s)
-print("gcc-wrapper.py: converted print statements to python3 syntax")
-PYEOF
+          import re, sys
+          p = sys.argv[1]
+          s = open(p, encoding="utf-8", errors="ignore").read()
+          s = s.replace("#!/usr/bin/env python2", "#!/usr/bin/env python3")
+          s = re.sub(r'print\s+(.+)$', lambda m: f'print({m.group(1)})', s, flags=re.MULTILINE)
+          open(p, "w", encoding="utf-8").write(s)
+          print("gcc-wrapper.py: converted print statements to python3 syntax")
+          PYEOF
           else
             echo "scripts/gcc-wrapper.py tidak ada, skip"
           fi
