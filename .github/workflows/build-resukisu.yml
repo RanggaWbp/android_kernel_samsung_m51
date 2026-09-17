@@ -29,7 +29,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git bc bison flex libssl-dev \
-            build-essential python3 zip curl libncurses-dev
+            build-essential python3 zip unzip curl libncurses-dev
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -58,61 +58,56 @@ jobs:
             echo "scripts/gcc-wrapper.py tidak ada, skip"
           fi
 
-      - name: Setup toolchain (GCC)
+      - name: Setup toolchain (NDK r20b, gcc 4.9)
         shell: bash
         run: |
           set -Eeuo pipefail
 
           TOOLCHAIN="$GITHUB_WORKSPACE/toolchain"
-          GCC64="$TOOLCHAIN/gcc64"
-          GCC32="$TOOLCHAIN/gcc32"
+          NDK_DIR="$TOOLCHAIN/android-ndk-r20b"
+          NDK_ZIP="$RUNNER_TEMP/android-ndk-r20b-linux-x86_64.zip"
 
           mkdir -p "$TOOLCHAIN"
 
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
-            "$GCC64"
+          curl --fail --location --retry 5 \
+            -o "$NDK_ZIP" \
+            https://dl.google.com/android/repository/android-ndk-r20b-linux-x86_64.zip
 
-          git clone --depth=1 \
-            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-            "$GCC32"
+          unzip -q "$NDK_ZIP" -d "$TOOLCHAIN"
 
-          echo "64-bit toolchain contents:"
-          find "$GCC64" -maxdepth 3 -type f -o -type l | head -100
+          GCC64="$NDK_DIR/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin"
+          GCC32="$NDK_DIR/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin"
 
-          echo "32-bit toolchain contents:"
-          find "$GCC32" -maxdepth 3 -type f -o -type l | head -100
-
-          chmod -R u+rx "$GCC64/bin" "$GCC32/bin"
-
-          AARCH64_GCC="$GCC64/bin/aarch64-linux-android-gcc"
-          ARM32_GCC="$GCC32/bin/arm-linux-androideabi-gcc"
-
-          test -e "$AARCH64_GCC" || {
-            echo "::error::Missing $AARCH64_GCC"
-            exit 1
-          }
-
-          test -e "$ARM32_GCC" || {
-            echo "::error::Missing $ARM32_GCC"
-            exit 1
-          }
+          AARCH64_GCC="$GCC64/aarch64-linux-android-gcc"
+          ARM32_GCC="$GCC32/arm-linux-androideabi-gcc"
 
           test -x "$AARCH64_GCC" || {
-            echo "::error::Compiler exists but is not executable: $AARCH64_GCC"
-            ls -l "$AARCH64_GCC"
+            echo "::error::Missing or non-executable compiler: $AARCH64_GCC"
+            find "$NDK_DIR/toolchains" -type f -name '*-gcc' -print
             exit 1
           }
 
+          test -x "$ARM32_GCC" || {
+            echo "::error::Missing or non-executable compiler: $ARM32_GCC"
+            find "$NDK_DIR/toolchains" -type f -name '*-gcc' -print
+            exit 1
+          }
+
+          echo "AArch64 compiler:"
           "$AARCH64_GCC" --version
+
+          echo "ARM32 compiler:"
+          "$ARM32_GCC" --version
 
       - name: Build kernel (bypass build_kernel.sh, no stale clang path)
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          export GCC64="$GITHUB_WORKSPACE/toolchain/gcc64/bin"
-          export GCC32="$GITHUB_WORKSPACE/toolchain/gcc32/bin"
+          NDK_DIR="$GITHUB_WORKSPACE/toolchain/android-ndk-r20b"
+
+          export GCC64="$NDK_DIR/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin"
+          export GCC32="$NDK_DIR/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin"
           export PATH="$GCC64:$GCC32:$PATH"
 
           export ARCH=arm64
@@ -126,7 +121,9 @@ jobs:
           fi
 
           command -v aarch64-linux-android-gcc
+          command -v arm-linux-androideabi-gcc
           aarch64-linux-android-gcc --version
+          arm-linux-androideabi-gcc --version
 
           make O=out ARCH=arm64 \
             CROSS_COMPILE="$CROSS_COMPILE" \
