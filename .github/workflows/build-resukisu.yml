@@ -58,38 +58,80 @@ jobs:
             echo "scripts/gcc-wrapper.py tidak ada, skip"
           fi
 
-      - name: Setup toolchain (gcc explicit)
+      - name: Setup toolchain (GCC)
+        shell: bash
         run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/toolchain"
+          set -Eeuo pipefail
+
+          TOOLCHAIN="$GITHUB_WORKSPACE/toolchain"
+          GCC64="$TOOLCHAIN/gcc64"
+          GCC32="$TOOLCHAIN/gcc32"
+
+          mkdir -p "$TOOLCHAIN"
+
           git clone --depth=1 \
             https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
-            "$GITHUB_WORKSPACE/toolchain/gcc64"
+            "$GCC64"
+
           git clone --depth=1 \
             https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
-            "$GITHUB_WORKSPACE/toolchain/gcc32"
-          test -x "$GITHUB_WORKSPACE/toolchain/gcc64/bin/aarch64-linux-android-gcc"
-          "$GITHUB_WORKSPACE/toolchain/gcc64/bin/aarch64-linux-android-gcc" --version
+            "$GCC32"
+
+          echo "64-bit toolchain contents:"
+          find "$GCC64" -maxdepth 3 -type f -o -type l | head -100
+
+          echo "32-bit toolchain contents:"
+          find "$GCC32" -maxdepth 3 -type f -o -type l | head -100
+
+          chmod -R u+rx "$GCC64/bin" "$GCC32/bin"
+
+          AARCH64_GCC="$GCC64/bin/aarch64-linux-android-gcc"
+          ARM32_GCC="$GCC32/bin/arm-linux-androideabi-gcc"
+
+          test -e "$AARCH64_GCC" || {
+            echo "::error::Missing $AARCH64_GCC"
+            exit 1
+          }
+
+          test -e "$ARM32_GCC" || {
+            echo "::error::Missing $ARM32_GCC"
+            exit 1
+          }
+
+          test -x "$AARCH64_GCC" || {
+            echo "::error::Compiler exists but is not executable: $AARCH64_GCC"
+            ls -l "$AARCH64_GCC"
+            exit 1
+          }
+
+          "$AARCH64_GCC" --version
 
       - name: Build kernel (bypass build_kernel.sh, no stale clang path)
+        shell: bash
         run: |
-          set -euxo pipefail
+          set -Eeuo pipefail
+
           export GCC64="$GITHUB_WORKSPACE/toolchain/gcc64/bin"
           export GCC32="$GITHUB_WORKSPACE/toolchain/gcc32/bin"
           export PATH="$GCC64:$GCC32:$PATH"
+
           export ARCH=arm64
           export CROSS_COMPILE="$GCC64/aarch64-linux-android-"
           export CROSS_COMPILE_ARM32="$GCC32/arm-linux-androideabi-"
+
           unset CC LLVM CLANG_TRIPLE
 
           if grep -RInE 'home/mohaaserver1|llvm8|Snapdragon_LLVM' --exclude-dir=.git . ; then
             echo "::warning::Ditemukan path clang lama hardcoded di atas — build tetap lanjut pakai gcc eksplisit"
           fi
 
+          command -v aarch64-linux-android-gcc
+          aarch64-linux-android-gcc --version
+
           make O=out ARCH=arm64 \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            $DEFCONFIG
+            "$DEFCONFIG"
 
           make O=out ARCH=arm64 \
             CC="$GCC64/aarch64-linux-android-gcc" \
