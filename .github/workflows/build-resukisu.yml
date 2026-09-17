@@ -125,11 +125,13 @@ jobs:
           arm-linux-androideabi-gcc --version
 
           make O=out ARCH=arm64 \
+            HOSTCFLAGS="-fcommon" \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             "$DEFCONFIG"
 
           make O=out ARCH=arm64 \
+            HOSTCFLAGS="-fcommon" \
             CC="$GCC64/aarch64-linux-android-gcc" \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
