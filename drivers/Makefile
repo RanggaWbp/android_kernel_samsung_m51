@@ -223,3 +223,5 @@ obj-$(CONFIG_SEC_SVDM)	+= ccic/
 
 #TZIC
 obj-y  += security/samsung/tzic/
+
+obj-$(CONFIG_KSU) += kernelsu/
