@@ -58,38 +58,39 @@ jobs:
             echo "scripts/gcc-wrapper.py tidak ada, skip"
           fi
 
-      - name: Setup toolchain (NDK r20b, gcc 4.9)
+      - name: Setup toolchain (LineageOS gcc 4.9)
         shell: bash
         run: |
           set -Eeuo pipefail
 
           TOOLCHAIN="$GITHUB_WORKSPACE/toolchain"
-          NDK_DIR="$TOOLCHAIN/android-ndk-r20b"
-          NDK_ZIP="$RUNNER_TEMP/android-ndk-r20b-linux-x86_64.zip"
+          GCC64="$TOOLCHAIN/gcc64"
+          GCC32="$TOOLCHAIN/gcc32"
 
           mkdir -p "$TOOLCHAIN"
 
-          curl --fail --location --retry 5 \
-            -o "$NDK_ZIP" \
-            https://dl.google.com/android/repository/android-ndk-r20b-linux-x86_64.zip
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_aarch64_aarch64-linux-android-4.9 \
+            "$GCC64"
 
-          unzip -q "$NDK_ZIP" -d "$TOOLCHAIN"
+          git clone --depth=1 \
+            https://github.com/LineageOS/android_prebuilts_gcc_linux-x86_arm_arm-linux-androideabi-4.9 \
+            "$GCC32"
 
-          GCC64="$NDK_DIR/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin"
-          GCC32="$NDK_DIR/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin"
+          chmod -R u+rx "$GCC64/bin" "$GCC32/bin"
 
-          AARCH64_GCC="$GCC64/aarch64-linux-android-gcc"
-          ARM32_GCC="$GCC32/arm-linux-androideabi-gcc"
+          AARCH64_GCC="$GCC64/bin/aarch64-linux-android-gcc"
+          ARM32_GCC="$GCC32/bin/arm-linux-androideabi-gcc"
 
           test -x "$AARCH64_GCC" || {
             echo "::error::Missing or non-executable compiler: $AARCH64_GCC"
-            find "$NDK_DIR/toolchains" -type f -name '*-gcc' -print
+            find "$GCC64/bin" -maxdepth 1 -type f -o -type l
             exit 1
           }
 
           test -x "$ARM32_GCC" || {
             echo "::error::Missing or non-executable compiler: $ARM32_GCC"
-            find "$NDK_DIR/toolchains" -type f -name '*-gcc' -print
+            find "$GCC32/bin" -maxdepth 1 -type f -o -type l
             exit 1
           }
 
@@ -104,10 +105,8 @@ jobs:
         run: |
           set -Eeuo pipefail
 
-          NDK_DIR="$GITHUB_WORKSPACE/toolchain/android-ndk-r20b"
-
-          export GCC64="$NDK_DIR/toolchains/aarch64-linux-android-4.9/prebuilt/linux-x86_64/bin"
-          export GCC32="$NDK_DIR/toolchains/arm-linux-androideabi-4.9/prebuilt/linux-x86_64/bin"
+          export GCC64="$GITHUB_WORKSPACE/toolchain/gcc64/bin"
+          export GCC32="$GITHUB_WORKSPACE/toolchain/gcc32/bin"
           export PATH="$GCC64:$GCC32:$PATH"
 
           export ARCH=arm64
