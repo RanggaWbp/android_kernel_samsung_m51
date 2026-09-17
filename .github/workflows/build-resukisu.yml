@@ -1,0 +1,104 @@
+name: Build ReSukiSU Kernel M51
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ ten ]
+
+env:
+  KERNEL_REPO_BRANCH: ten
+  DEFCONFIG: m51_eur_open_defconfig
+  ARCH: arm64
+  ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git bc bison flex libssl-dev \
+            build-essential python3 zip curl libncurses-dev
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python3-version: '3.11'
+
+      - name: Apply / refresh ReSukiSU integration
+        run: |
+          python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 || true
+          git diff --stat
+
+      - name: Setup toolchain (clang + gcc)
+        run: |
+          mkdir -p toolchain && cd toolchain
+          curl -LSs -o clang.tar.gz https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b.tar.gz || true
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
+          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
+
+      - name: Build kernel
+        run: |
+          export PATH="$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
+          export CROSS_COMPILE=aarch64-linux-android-
+          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
+          if [ -f build_kernel.sh ]; then
+            bash build_kernel.sh
+          else
+            make O=out ARCH=$ARCH $DEFCONFIG
+            make O=out ARCH=$ARCH -j$(nproc --all) \
+              CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32
+          fi
+
+      - name: Locate kernel image
+        id: img
+        run: |
+          IMG=$(find . -name 'Image.gz-dtb' -o -name 'Image.gz' -o -name 'Image' 2>/dev/null | head -n1)
+          echo "path=$IMG" >> "$GITHUB_OUTPUT"
+          test -n "$IMG"
+
+      - name: Clone AnyKernel3
+        run: git clone --depth=1 "$ANYKERNEL_REPO" AK3
+
+      - name: Package flashable zip
+        run: |
+          cp "${{ steps.img.outputs.path }}" AK3/
+          cat > AK3/anykernel.sh <<'EOK'
+          properties() { '
+          kernel.string=ReSukiSU Kernel M51 by AutoBuild
+          do.devicecheck=0
+          do.modules=0
+          do.systemless=1
+          do.cleanup=1
+          do.cleanuponabort=0
+          '; }
+          . tools/ak3-core.sh
+          dump_boot
+          write_boot
+          EOK
+          cd AK3
+          ZIPNAME="ReSukiSU-M51-$(date +%Y%m%d-%H%M)-$(git -C .. rev-parse --short HEAD).zip"
+          zip -r9 "../$ZIPNAME" . -x .git README.md
+          echo "ZIPNAME=$ZIPNAME" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReSukiSU-M51-flashable
+          path: ${{ env.ZIPNAME }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v-${{ github.run_number }}-${{ github.sha }}
+          name: "ReSukiSU Kernel M51 build #${{ github.run_number }}"
+          files: ${{ env.ZIPNAME }}
+          body: |
+            Auto build. Flash via TWRP/OrangeFox, tanpa wipe data.
