@@ -6,7 +6,6 @@ on:
     branches: [ ten ]
 
 env:
-  KERNEL_REPO_BRANCH: ten
   DEFCONFIG: m51_eur_open_defconfig
   ARCH: arm64
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
@@ -21,6 +20,11 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
       - name: Install deps
         run: |
           sudo apt-get update
@@ -30,39 +34,75 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python3-version: '3.11'
+          python-version: '3.11'
 
       - name: Apply / refresh ReSukiSU integration
         run: |
           python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 || true
           git diff --stat
 
-      - name: Setup toolchain (clang + gcc)
+      - name: Fix gcc-wrapper.py (py2 -> py3)
         run: |
-          mkdir -p toolchain && cd toolchain
-          curl -LSs -o clang.tar.gz https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r416183b.tar.gz || true
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 gcc64
-          git clone --depth=1 https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 gcc32
-
-      - name: Build kernel
-        run: |
-          export PATH="$GITHUB_WORKSPACE/toolchain/gcc64/bin:$GITHUB_WORKSPACE/toolchain/gcc32/bin:$PATH"
-          export CROSS_COMPILE=aarch64-linux-android-
-          export CROSS_COMPILE_ARM32=arm-linux-androideabi-
-          if [ -f build_kernel.sh ]; then
-            bash build_kernel.sh
+          W="scripts/gcc-wrapper.py"
+          if [ -f "$W" ]; then
+            python3 - "$W" <<'PYEOF'
+import re, sys
+p = sys.argv[1]
+s = open(p, encoding="utf-8", errors="ignore").read()
+s = s.replace("#!/usr/bin/env python2", "#!/usr/bin/env python3")
+s = re.sub(r'print\s+(.+)$', lambda m: f'print({m.group(1)})', s, flags=re.MULTILINE)
+open(p, "w", encoding="utf-8").write(s)
+print("gcc-wrapper.py: converted print statements to python3 syntax")
+PYEOF
           else
-            make O=out ARCH=$ARCH $DEFCONFIG
-            make O=out ARCH=$ARCH -j$(nproc --all) \
-              CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_ARM32=$CROSS_COMPILE_ARM32
+            echo "scripts/gcc-wrapper.py tidak ada, skip"
           fi
+
+      - name: Setup toolchain (gcc explicit)
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/toolchain"
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 \
+            "$GITHUB_WORKSPACE/toolchain/gcc64"
+          git clone --depth=1 \
+            https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9 \
+            "$GITHUB_WORKSPACE/toolchain/gcc32"
+          test -x "$GITHUB_WORKSPACE/toolchain/gcc64/bin/aarch64-linux-android-gcc"
+          "$GITHUB_WORKSPACE/toolchain/gcc64/bin/aarch64-linux-android-gcc" --version
+
+      - name: Build kernel (bypass build_kernel.sh, no stale clang path)
+        run: |
+          set -euxo pipefail
+          export GCC64="$GITHUB_WORKSPACE/toolchain/gcc64/bin"
+          export GCC32="$GITHUB_WORKSPACE/toolchain/gcc32/bin"
+          export PATH="$GCC64:$GCC32:$PATH"
+          export ARCH=arm64
+          export CROSS_COMPILE="$GCC64/aarch64-linux-android-"
+          export CROSS_COMPILE_ARM32="$GCC32/arm-linux-androideabi-"
+          unset CC LLVM CLANG_TRIPLE
+
+          if grep -RInE 'home/mohaaserver1|llvm8|Snapdragon_LLVM' --exclude-dir=.git . ; then
+            echo "::warning::Ditemukan path clang lama hardcoded di atas — build tetap lanjut pakai gcc eksplisit"
+          fi
+
+          make O=out ARCH=arm64 \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            $DEFCONFIG
+
+          make O=out ARCH=arm64 \
+            CC="$GCC64/aarch64-linux-android-gcc" \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            -j"$(nproc)"
 
       - name: Locate kernel image
         id: img
         run: |
-          IMG=$(find . -name 'Image.gz-dtb' -o -name 'Image.gz' -o -name 'Image' 2>/dev/null | head -n1)
-          echo "path=$IMG" >> "$GITHUB_OUTPUT"
+          IMG=$(find out -name 'Image.gz-dtb' -o -name 'Image.gz' -o -name 'Image' 2>/dev/null | head -n1)
           test -n "$IMG"
+          echo "path=$IMG" >> "$GITHUB_OUTPUT"
 
       - name: Clone AnyKernel3
         run: git clone --depth=1 "$ANYKERNEL_REPO" AK3
