@@ -207,12 +207,15 @@ jobs:
 
           echo "Image.gz-dtb size: $(stat -c%s "$IMG") bytes"
           python3 - "$IMG" <<'PYEOF'
-          import sys, gzip, zlib
+          import sys, zlib
 
-          # Image.gz-dtb = Image.gz (gzip stream) + DTB mentah (append).
-          # Jadi file TIDAK selalu gunzip bersih: setelah stream gzip
-          # berakhir masih ada byte DTB. Dekompres hanya stream gzip-nya,
-          # ambil sisa byte mentahnya, lalu cari DTB di keduanya.
+          # Image.gz-dtb = Image.gz (satu stream gzip) + DTB mentah
+          # (di-append oleh aturan CAT). File ini BUKAN gzip bersih:
+          # setelah stream gzip habis, sisa byte adalah DTB. Karena itu
+          # dekompresi wajib berhenti tepat di akhir stream pertama.
+          # zlib.decompressobj() melakukan itu; gzip.GzipFile() justru
+          # mencoba membaca sisa DTB sebagai anggota gzip berikutnya dan
+          # gagal dengan "Not a gzipped file".
           path = sys.argv[1]
           raw = open(path, "rb").read()
           print(f"total bytes: {len(raw)}")
@@ -222,15 +225,14 @@ jobs:
                     "CONFIG_BUILD_ARM64_KERNEL_COMPRESSION_GZIP tidak aktif?")
               sys.exit(1)
 
-          d = gzip.GzipFile(fileobj=__import__("io").BytesIO(raw))
+          z = zlib.decompressobj(16 + zlib.MAX_WBITS)  # 16 = mode gzip
           try:
-              image = d.read()
-              consumed = d.fileobj.tell()
+              image = z.decompress(raw)
           except Exception as e:
-              print(f"::error::gagal dekompres gzip: {e}")
+              print(f"::error::gagal dekompres stream gzip: {e}")
               sys.exit(1)
 
-          tail = raw[consumed:]
+          tail = z.unused_data
           print(f"decompressed Image: {len(image)} bytes; "
                 f"sisa setelah stream gzip: {len(tail)} bytes")
 
@@ -243,17 +245,24 @@ jobs:
           n = n_img + n_tail
           print(f"ARM64 magic OK @0x38; DTB magic -> di Image: {n_img}, "
                 f"di sisa: {n_tail}, total: {n}")
+
+          # Gate utama: harus ADA DTB nyata (magic d0 0d fe ed), bukan
+          # sekadar string "sdmmagpie" yang juga muncul di kernel polos.
           if n == 0:
               print("::error::Tidak ada DTB ter-append ke Image.gz-dtb. "
                     "Boot image M51 akan invalid -> jangan pakai untuk flash.")
               sys.exit(1)
+          if n_tail == 0:
+              print("::error::DTB magic hanya ditemukan di dalam Image, "
+                    "bukan sebagai DTB ter-append. Boot image M51 invalid.")
+              sys.exit(1)
 
-          hay = image + tail
-          if b"qcom,sm7150" not in hay and b"sdmmagpie" not in hay:
+          if b"qcom,sm7150" not in tail and b"sdmmagpie" not in tail:
               print("::error::DTB ter-append tapi bukan tree SM7150/sdmmagpie — "
                     "device tree salah untuk M51.")
               sys.exit(1)
-          print("OK: DTB SM7150/sdmmagpie ter-append ke Image.gz-dtb")
+          print(f"OK: DTB SM7150/sdmmagpie ter-append "
+                f"({len(tail)} byte, {n_tail} DTB)")
           PYEOF
 
           echo "path=$IMG" >> "$GITHUB_OUTPUT"
