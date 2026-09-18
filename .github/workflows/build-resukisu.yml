@@ -263,6 +263,14 @@ jobs:
               sys.exit(1)
           print(f"OK: DTB SM7150/sdmmagpie ter-append "
                 f"({len(tail)} byte, {n_tail} DTB)")
+
+          with open("kernel-dtb-check.txt", "w") as f:
+              f.write("== appended DTB check ==\n")
+              f.write(f"Image.gz-dtb total : {len(raw)} byte\n")
+              f.write(f"decompressed Image : {len(image)} byte\n")
+              f.write(f"arm64 magic @0x38  : {image[0x38:0x3c]!r}\n")
+              f.write(f"DTB di-append      : {len(tail)} byte, {n_tail} DTB\n")
+              f.write("hasil              : OK (DTB SM7150/sdmmagpie)\n")
           PYEOF
 
           echo "path=$IMG" >> "$GITHUB_OUTPUT"
@@ -282,48 +290,24 @@ jobs:
 
           cp "${{ steps.img.outputs.path }}" AK3/
 
-          cat > AK3/anykernel.sh <<'EOK'
-          ### AnyKernel3 Ramdisk Mod Script
-          ## osm0sis @ xda-developers
+          # anykernel.sh diambil dari file yang di-commit di repo.
+          # Sebelumnya di-generate lewat heredoc di dalam YAML; isi heredoc
+          # mewarisi indentasi blok sehingga file hasilnya rusak (variabel
+          # seperti block= tidak lagi di awal baris) dan grep audit gagal.
+          cp anykernel/anykernel.sh AK3/anykernel.sh
 
-          ### AnyKernel setup
-          # begin properties
-          properties() { '
-          kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150)
-          do.devicecheck=1
-          do.modules=0
-          do.systemless=1
-          do.cleanup=1
-          do.cleanuponabort=0
-          device.name1=m51
-          device.name2=m51eur
-          device.name3=SM-M515F
-          device.name4=
-          device.name5=
-          supported.versions=
-          supported.patchlevels=
-          '; } # end properties
-
-          ### AnyKernel install
-          # begin attributes
-          attributes() {
-          set_perm_recursive 0 0 755 644 $ramdisk/*;
-          set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
-          } # end attributes
-
-          ## boot shell variables
-          block=/dev/block/bootdevice/by-name/boot;
-          is_slot_device=0;
-          ramdisk_compression=auto;
-          patch_vbmeta_flag=auto;
-
-          . tools/ak3-core.sh && attributes;
-
-          # boot install
-          dump_boot;
-          write_boot;
-          ## end boot install
-          EOK
+          # Sanity: variabel wajib harus benar-benar di awal baris.
+          for v in 'block=/dev/block/bootdevice/by-name/boot;' 'is_slot_device=0;' 'do.devicecheck=1'; do
+            grep -q "^$v" AK3/anykernel.sh || {
+              echo "::error::anykernel.sh rusak — '$v' tidak di awal baris"
+              head -30 AK3/anykernel.sh
+              exit 1
+            }
+          done
+          grep -q '^device.name1=m51$' AK3/anykernel.sh || {
+            echo "::error::anykernel.sh tidak menyatakan device.name1=m51"
+            exit 1
+          }
 
           # Audit bukti anykernel + DTB untuk artifact rilis
           {
@@ -337,10 +321,6 @@ jobs:
             echo "== Image.gz-dtb =="
             ls -la AK3/Image.gz-dtb
             sha256sum AK3/Image.gz-dtb
-            echo ""
-            echo "== appended DTB check =="
-            gunzip -c AK3/Image.gz-dtb > /tmp/audit.raw
-            python3 -c "d=open('/tmp/audit.raw','rb').read(); print('arm64 magic @0x38:', d[0x38:0x3c]); print('DTB magic count:', d.count(b'\xd0\x0d\xfe\xed'))"
           } > "$GITHUB_WORKSPACE/anykernel-audit-${{ matrix.suffix }}.txt"
 
           cp out/.config "$GITHUB_WORKSPACE/config-${{ matrix.suffix }}.txt"
