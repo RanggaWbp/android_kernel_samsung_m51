@@ -132,3 +132,6 @@ obj-y				+= exofs/ # Multiple modules
 obj-$(CONFIG_CEPH_FS)		+= ceph/
 obj-$(CONFIG_PSTORE)		+= pstore/
 obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
+
+# Fix FORTIFY_SOURCE false-positive __read_overflow2 on modern GCC
+CFLAGS_statfs.o += -D__NO_FORTIFY
