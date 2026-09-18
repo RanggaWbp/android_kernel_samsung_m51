@@ -78,3 +78,7 @@ GTAGS
 *.rej
 out/*
 arch/arm64/boot/Image
+# dotfiles yang WAJIB di-track (submodule + CI)
+!.gitmodules
+!.github/
+!.github/**
