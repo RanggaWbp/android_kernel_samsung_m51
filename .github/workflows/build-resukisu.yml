@@ -186,21 +186,47 @@ jobs:
         run: |
           cp "${{ steps.img.outputs.path }}" AK3/
           cat > AK3/anykernel.sh <<'EOK'
+          ### AnyKernel3 Ramdisk Mod Script
+          ## osm0sis @ xda-developers
+
+          ### AnyKernel setup
+          # begin properties
           properties() { '
           kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150) by AutoBuild
           do.devicecheck=1
-          device.name1=m51
-          device.name2=m51nueea
-          device.name3=m51ub
-          device.name4=SM-M515F
           do.modules=0
           do.systemless=1
           do.cleanup=1
           do.cleanuponabort=0
-          '; }
-          . tools/ak3-core.sh
-          dump_boot
-          write_boot
+          device.name1=m51
+          device.name2=
+          device.name3=
+          device.name4=
+          device.name5=
+          supported.versions=
+          supported.patchlevels=
+          '; } # end properties
+
+          ### AnyKernel install
+          # begin attributes
+          attributes() {
+          set_perm_recursive 0 0 755 644 $ramdisk/*;
+          set_perm_recursive 0 0 750 750 $ramdisk/init* $ramdisk/sbin;
+          } # end attributes
+
+          ## boot shell variables
+          block=/dev/block/bootdevice/by-name/boot;
+          is_slot_device=0;
+          ramdisk_compression=auto;
+          patch_vbmeta_flag=auto;
+
+          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
+          . tools/ak3-core.sh && attributes;
+
+          # boot install
+          dump_boot;
+          write_boot;
+          ## end boot install
           EOK
           cd AK3
           ZIPNAME="ReSukiSU-M51-$(date +%Y%m%d-%H%M)-$(git -C .. rev-parse --short HEAD).zip"
