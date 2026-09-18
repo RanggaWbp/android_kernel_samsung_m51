@@ -184,7 +184,7 @@ zinstall install:
 PHONY += dtbs dtbs_install
 
 dtbs: prepare scripts
-	$(Q)$(MAKE) $(build)=$(boot)/dts/qcom sdmmagpie.dtb
+	$(Q)$(MAKE) $(build)=$(boot)/dts/qcom ../sdmmagpie.dtb
 	$(Q)$(MAKE) $(build)=$(boot)/dts/samsung
 
 dtbs_install:
