@@ -171,8 +171,6 @@ dtb-$(CONFIG_ARCH_SM6150)	+= sm6150-rumi.dtb \
 	sm6150-usbc-idp.dtb \
 	sm6150-usbc-minidp-idp.dtb \
 	sm6150-cmd-mode-display-idp.dtb \
-	sa6155-adp-star.dtb \
-	sa6155p-adp-star.dtb \
 	sa6155-adp-air.dtb \
 	sa6155p-adp-air.dtb \
 	sa6155p-v2-adp-star.dtb \
