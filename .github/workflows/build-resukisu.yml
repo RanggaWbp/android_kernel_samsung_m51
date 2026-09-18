@@ -5,6 +5,9 @@ on:
   push:
     branches: [ ten ]
 
+permissions:
+  contents: write
+
 env:
   DEFCONFIG: m51_eur_open_defconfig
   ARCH: arm64
