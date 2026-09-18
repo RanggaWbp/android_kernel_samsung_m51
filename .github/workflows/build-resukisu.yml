@@ -206,20 +206,50 @@ jobs:
           }
 
           echo "Image.gz-dtb size: $(stat -c%s "$IMG") bytes"
-          gunzip -c "$IMG" > image-with-dtb.raw
-          python3 - <<'PYEOF'
-          import sys
-          d = open("image-with-dtb.raw", "rb").read()
-          if d[0x38:0x3c] != b"ARM\x64":
+          python3 - "$IMG" <<'PYEOF'
+          import sys, gzip, zlib
+
+          # Image.gz-dtb = Image.gz (gzip stream) + DTB mentah (append).
+          # Jadi file TIDAK selalu gunzip bersih: setelah stream gzip
+          # berakhir masih ada byte DTB. Dekompres hanya stream gzip-nya,
+          # ambil sisa byte mentahnya, lalu cari DTB di keduanya.
+          path = sys.argv[1]
+          raw = open(path, "rb").read()
+          print(f"total bytes: {len(raw)}")
+
+          if raw[:2] != b"\x1f\x8b":
+              print("::error::Image.gz-dtb bukan gzip (magic 1f8b tidak ada). "
+                    "CONFIG_BUILD_ARM64_KERNEL_COMPRESSION_GZIP tidak aktif?")
+              sys.exit(1)
+
+          d = gzip.GzipFile(fileobj=__import__("io").BytesIO(raw))
+          try:
+              image = d.read()
+              consumed = d.fileobj.tell()
+          except Exception as e:
+              print(f"::error::gagal dekompres gzip: {e}")
+              sys.exit(1)
+
+          tail = raw[consumed:]
+          print(f"decompressed Image: {len(image)} bytes; "
+                f"sisa setelah stream gzip: {len(tail)} bytes")
+
+          if image[0x38:0x3c] != b"ARM\x64":
               print("::error::Payload bukan ARM64 Image (magic @0x38 salah)")
               sys.exit(1)
-          n = d.count(b"\xd0\x0d\xfe\xed")
-          print(f"ARM64 magic OK @0x38; DTB magic occurrences: {n}")
+
+          n_img = image.count(b"\xd0\x0d\xfe\xed")
+          n_tail = tail.count(b"\xd0\x0d\xfe\xed")
+          n = n_img + n_tail
+          print(f"ARM64 magic OK @0x38; DTB magic -> di Image: {n_img}, "
+                f"di sisa: {n_tail}, total: {n}")
           if n == 0:
               print("::error::Tidak ada DTB ter-append ke Image.gz-dtb. "
                     "Boot image M51 akan invalid -> jangan pakai untuk flash.")
               sys.exit(1)
-          if b"qcom,sm7150" not in d and b"sdmmagpie" not in d:
+
+          hay = image + tail
+          if b"qcom,sm7150" not in hay and b"sdmmagpie" not in hay:
               print("::error::DTB ter-append tapi bukan tree SM7150/sdmmagpie — "
                     "device tree salah untuk M51.")
               sys.exit(1)
