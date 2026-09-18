@@ -188,7 +188,11 @@ jobs:
           cat > AK3/anykernel.sh <<'EOK'
           properties() { '
           kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150) by AutoBuild
-          do.devicecheck=0
+          do.devicecheck=1
+          device.name1=m51
+          device.name2=m51nueea
+          device.name3=m51ub
+          device.name4=SM-M515F
           do.modules=0
           do.systemless=1
           do.cleanup=1
