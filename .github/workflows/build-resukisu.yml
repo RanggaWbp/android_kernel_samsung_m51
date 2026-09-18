@@ -41,7 +41,7 @@ jobs:
 
       - name: Apply / refresh ReSukiSU integration
         run: |
-          python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 || true
+          python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 --skip execve,sys_reboot || true
           git diff --stat
 
       - name: Fix gcc-wrapper.py (py2 -> py3)
@@ -150,6 +150,17 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
+          # Target Image.gz-dtb tidak otomatis dibuild oleh 'make' default di fork
+          # kernel ini, padahal CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y +
+          # CONFIG_IMG_GZ_DTB=y mewajibkan kernel+DTB tergabung (device SM7150
+          # tidak pakai DTBO overlay terpisah). Build eksplisit targetnya:
+          make O=out ARCH=arm64 \
+            HOSTCFLAGS="-fcommon" \
+            CC="$GCC64/aarch64-linux-android-gcc" \
+            CROSS_COMPILE="$CROSS_COMPILE" \
+            CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
+            Image.gz-dtb 2>&1 | tee -a "$GITHUB_WORKSPACE/build.log"
+
       - name: Show errors on failure
         if: failure()
         run: |
@@ -158,8 +169,14 @@ jobs:
       - name: Locate kernel image
         id: img
         run: |
-          IMG=$(find out -name 'Image.gz-dtb' -o -name 'Image.gz' -o -name 'Image' 2>/dev/null | head -n1)
-          test -n "$IMG"
+          echo "Isi out/arch/arm64/boot:"
+          find out/arch/arm64/boot -maxdepth 1 -type f -exec ls -la {} \;
+
+          IMG="out/arch/arm64/boot/Image.gz-dtb"
+          if [ ! -f "$IMG" ]; then
+            echo "::error::Image.gz-dtb tidak ditemukan — kernel+DTB tidak tergabung, jangan lanjut packaging (boot image bakal invalid tanpa DTB yang cocok)."
+            exit 1
+          fi
           echo "path=$IMG" >> "$GITHUB_OUTPUT"
 
       - name: Clone AnyKernel3
@@ -170,7 +187,7 @@ jobs:
           cp "${{ steps.img.outputs.path }}" AK3/
           cat > AK3/anykernel.sh <<'EOK'
           properties() { '
-          kernel.string=ReSukiSU Kernel M51 by AutoBuild
+          kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150) by AutoBuild
           do.devicecheck=0
           do.modules=0
           do.systemless=1
