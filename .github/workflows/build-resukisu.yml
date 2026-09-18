@@ -3,25 +3,52 @@ name: Build ReSukiSU Kernel M51
 on:
   workflow_dispatch:
   push:
-    branches: [ ten ]
+    branches: [ ten, ten-stock ]
 
 permissions:
   contents: write
 
 env:
-  DEFCONFIG: m51_eur_open_defconfig
   ARCH: arm64
   ANYKERNEL_REPO: https://github.com/osm0sis/AnyKernel3.git
 
 jobs:
   build:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: ten
+            defconfig: m51_eur_open_defconfig
+            suffix: ten
+          - branch: ten-stock
+            defconfig: m51_eur_open_defconfig
+            suffix: ten-stock
+
     steps:
-      - name: Checkout kernel
+      - name: Checkout kernel (${{ matrix.branch }})
         uses: actions/checkout@v4
         with:
+          ref: ${{ matrix.branch }}
           submodules: recursive
           fetch-depth: 0
+
+      - name: Verify ReSukiSU submodule
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -f .gitmodules || { echo "::error::.gitmodules tidak ada — ReSukiSU bukan submodule"; exit 1; }
+          URL=$(git config --file .gitmodules --get submodule.KernelSU.url)
+          echo "KernelSU submodule url: $URL"
+          case "$URL" in
+            *ReSukiSU/ReSukiSU*) echo "OK: sumber ReSukiSU valid" ;;
+            *) echo "::error::Submodule KernelSU bukan dari ReSukiSU (dapat: $URL)"; exit 1 ;;
+          esac
+          git submodule status
+          test -d KernelSU/kernel || { echo "::error::KernelSU/kernel tidak ada"; exit 1; }
+          echo "ReSukiSU commit: $(git -C KernelSU rev-parse HEAD)"
+          git -C KernelSU describe --tags --always
 
       - name: Configure Git
         run: |
@@ -32,16 +59,18 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y git bc bison flex libssl-dev \
-            build-essential python3 zip unzip curl libncurses-dev
+            build-essential python3 zip unzip curl libncurses-dev device-tree-compiler
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      # Kegagalan di sini WAJIB menggagalkan build. Jangan pernah pakai "|| true":
+      # itu menyembunyikan integrasi ReSukiSU yang tidak ter-apply.
       - name: Apply / refresh ReSukiSU integration
         run: |
-          python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 --skip execve,sys_reboot || true
+          python3 apply_resukisu.py --repo "$GITHUB_WORKSPACE" --defconfig m51 --skip execve,sys_reboot
           git diff --stat
 
       - name: Fix gcc-wrapper.py (py2 -> py3)
@@ -87,23 +116,17 @@ jobs:
 
           test -x "$AARCH64_GCC" || {
             echo "::error::Missing or non-executable compiler: $AARCH64_GCC"
-            find "$GCC64/bin" -maxdepth 1 -type f -o -type l
             exit 1
           }
-
           test -x "$ARM32_GCC" || {
             echo "::error::Missing or non-executable compiler: $ARM32_GCC"
-            find "$GCC32/bin" -maxdepth 1 -type f -o -type l
             exit 1
           }
 
-          echo "AArch64 compiler:"
           "$AARCH64_GCC" --version
-
-          echo "ARM32 compiler:"
           "$ARM32_GCC" --version
 
-      - name: Build kernel (bypass build_kernel.sh, no stale clang path)
+      - name: Build kernel
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -118,20 +141,11 @@ jobs:
 
           unset CC LLVM CLANG_TRIPLE
 
-          if grep -RInE 'home/mohaaserver1|llvm8|Snapdragon_LLVM' --exclude-dir=.git . ; then
-            echo "::warning::Ditemukan path clang lama hardcoded di atas — build tetap lanjut pakai gcc eksplisit"
-          fi
-
-          command -v aarch64-linux-android-gcc
-          command -v arm-linux-androideabi-gcc
-          aarch64-linux-android-gcc --version
-          arm-linux-androideabi-gcc --version
-
           make O=out ARCH=arm64 \
             HOSTCFLAGS="-fcommon" \
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
-            "$DEFCONFIG"
+            "${{ matrix.defconfig }}"
 
           # FORTIFY_SOURCE false-positive di GCC 4.9 (bug __builtin_object_size
           # pada fungsi yang di-clone/inline oleh compiler) -> matikan.
@@ -141,7 +155,16 @@ jobs:
             CROSS_COMPILE="$CROSS_COMPILE" \
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             olddefconfig
-          grep FORTIFY out/.config || true
+
+          # Sanity check: KSU harus benar-benar aktif di .config final
+          grep -q "^CONFIG_KSU=y" out/.config || {
+            echo "::error::CONFIG_KSU=y hilang dari out/.config setelah olddefconfig"
+            exit 1
+          }
+          grep -q "^CONFIG_KSU_MANUAL_HOOK=y" out/.config || {
+            echo "::error::CONFIG_KSU_MANUAL_HOOK=y hilang dari out/.config"
+            exit 1
+          }
 
           make O=out ARCH=arm64 \
             HOSTCFLAGS="-fcommon" \
@@ -150,10 +173,9 @@ jobs:
             CROSS_COMPILE_ARM32="$CROSS_COMPILE_ARM32" \
             -j"$(nproc)" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
 
-          # Target Image.gz-dtb tidak otomatis dibuild oleh 'make' default di fork
-          # kernel ini, padahal CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y +
-          # CONFIG_IMG_GZ_DTB=y mewajibkan kernel+DTB tergabung (device SM7150
-          # tidak pakai DTBO overlay terpisah). Build eksplisit targetnya:
+          # SM7150 M51 memakai base DTB sdmmagpie.dtb yang di-append ke Image
+          # (CONFIG_BUILD_ARM64_APPENDED_DTB_IMAGE=y / CONFIG_IMG_GZ_DTB=y),
+          # jadi Image.gz-dtb WAJIB berisi Image.gz + minimal satu DTB.
           make O=out ARCH=arm64 \
             HOSTCFLAGS="-fcommon" \
             CC="$GCC64/aarch64-linux-android-gcc" \
@@ -166,25 +188,57 @@ jobs:
         run: |
           grep -nE "error:|Error [0-9]+" "$GITHUB_WORKSPACE/build.log" | head -50 || true
 
-      - name: Locate kernel image
+      # Gerbang keras: kernel tanpa DTB akan boot-fault dan TWRP melaporkan
+      # "Unable to determine partition". Jangan lanjut kalau DTB tidak ter-append.
+      - name: Validate kernel image + appended DTB
         id: img
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
           echo "Isi out/arch/arm64/boot:"
           find out/arch/arm64/boot -maxdepth 1 -type f -exec ls -la {} \;
 
           IMG="out/arch/arm64/boot/Image.gz-dtb"
-          if [ ! -f "$IMG" ]; then
-            echo "::error::Image.gz-dtb tidak ditemukan — kernel+DTB tidak tergabung, jangan lanjut packaging (boot image bakal invalid tanpa DTB yang cocok)."
+          test -f "$IMG" || {
+            echo "::error::Image.gz-dtb tidak ditemukan — kernel+DTB tidak tergabung"
             exit 1
-          fi
+          }
+
+          echo "Image.gz-dtb size: $(stat -c%s "$IMG") bytes"
+          gunzip -c "$IMG" > image-with-dtb.raw
+          python3 - <<'PYEOF'
+          import sys
+          d = open("image-with-dtb.raw", "rb").read()
+          if d[0x38:0x3c] != b"ARM\x64":
+              print("::error::Payload bukan ARM64 Image (magic @0x38 salah)")
+              sys.exit(1)
+          n = d.count(b"\xd0\x0d\xfe\xed")
+          print(f"ARM64 magic OK @0x38; DTB magic occurrences: {n}")
+          if n == 0:
+              print("::error::Tidak ada DTB ter-append ke Image.gz-dtb. "
+                    "Boot image M51 akan invalid -> jangan pakai untuk flash.")
+              sys.exit(1)
+          print("OK: minimal satu DTB ter-append ke Image.gz-dtb")
+          PYEOF
+
           echo "path=$IMG" >> "$GITHUB_OUTPUT"
 
       - name: Clone AnyKernel3
         run: git clone --depth=1 "$ANYKERNEL_REPO" AK3
 
       - name: Package flashable zip
+        shell: bash
         run: |
+          set -Eeuo pipefail
+
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          STAMP=$(TZ=Asia/Jakarta date +%Y%m%d-%H%M)
+          ZIPNAME="ReSukiSU-Kernel-M51-${{ matrix.suffix }}-${STAMP}-WIB-${SHORT_SHA}.zip"
+          echo "ZIPNAME=$ZIPNAME" >> "$GITHUB_ENV"
+
           cp "${{ steps.img.outputs.path }}" AK3/
+
           cat > AK3/anykernel.sh <<'EOK'
           ### AnyKernel3 Ramdisk Mod Script
           ## osm0sis @ xda-developers
@@ -192,15 +246,15 @@ jobs:
           ### AnyKernel setup
           # begin properties
           properties() { '
-          kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150) by AutoBuild
+          kernel.string=ReSukiSU Kernel for Samsung Galaxy M51 (SM-M515F, SM7150)
           do.devicecheck=1
           do.modules=0
           do.systemless=1
           do.cleanup=1
           do.cleanuponabort=0
           device.name1=m51
-          device.name2=
-          device.name3=
+          device.name2=m51eur
+          device.name3=SM-M515F
           device.name4=
           device.name5=
           supported.versions=
@@ -220,7 +274,6 @@ jobs:
           ramdisk_compression=auto;
           patch_vbmeta_flag=auto;
 
-          # import functions/variables and setup patching - see for reference (DO NOT REMOVE)
           . tools/ak3-core.sh && attributes;
 
           # boot install
@@ -228,22 +281,96 @@ jobs:
           write_boot;
           ## end boot install
           EOK
+
+          # Audit bukti anykernel + DTB untuk artifact rilis
+          {
+            echo "== anykernel.sh (branch ${{ matrix.branch }}) =="
+            echo "commit: $(git rev-parse HEAD)"
+            echo "block:  $(grep -m1 '^block=' AK3/anykernel.sh)"
+            echo "slot:   $(grep -m1 '^is_slot_device=' AK3/anykernel.sh)"
+            echo "devicecheck: $(grep -m1 '^do.devicecheck=' AK3/anykernel.sh)"
+            echo "device.name1: $(grep -m1 '^device.name1=' AK3/anykernel.sh)"
+            echo ""
+            echo "== Image.gz-dtb =="
+            ls -la AK3/Image.gz-dtb
+            sha256sum AK3/Image.gz-dtb
+            echo ""
+            echo "== appended DTB check =="
+            gunzip -c AK3/Image.gz-dtb > /tmp/audit.raw
+            python3 -c "d=open('/tmp/audit.raw','rb').read(); print('arm64 magic @0x38:', d[0x38:0x3c]); print('DTB magic count:', d.count(b'\xd0\x0d\xfe\xed'))"
+          } > "$GITHUB_WORKSPACE/anykernel-audit-${{ matrix.suffix }}.txt"
+
+          cp out/.config "$GITHUB_WORKSPACE/config-${{ matrix.suffix }}.txt"
+          cp build.log "$GITHUB_WORKSPACE/build-${{ matrix.suffix }}.log"
+
+          {
+            echo "device=Samsung Galaxy M51 (SM-M515F)"
+            echo "codename=m51"
+            echo "kernel=Linux 4.14 Non-GKI (SM7150)"
+            echo "branch=${{ matrix.branch }}"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "defconfig=${{ matrix.defconfig }}"
+            echo "recovery=TWRP"
+            echo "packaging=AnyKernel3"
+            echo "resukisu_commit=$(git -C KernelSU rev-parse HEAD)"
+            echo "resukisu_url=https://github.com/ReSukiSU/ReSukiSU"
+            echo "build_date_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "$GITHUB_WORKSPACE/build-info-${{ matrix.suffix }}.txt"
+
           cd AK3
-          ZIPNAME="ReSukiSU-M51-$(date +%Y%m%d-%H%M)-$(git -C .. rev-parse --short HEAD).zip"
-          zip -r9 "../$ZIPNAME" . -x .git README.md
-          echo "ZIPNAME=$ZIPNAME" >> "$GITHUB_ENV"
+          zip -r9 "../$ZIPNAME" . -x '.git/*' '.github/*' 'README.md'
+
+      - name: Validate zip + write checksums
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unzip -t "$ZIPNAME"
+          unzip -l "$ZIPNAME" | grep -q "Image.gz-dtb" || {
+            echo "::error::ZIP tidak memuat Image.gz-dtb"; exit 1
+          }
+          unzip -l "$ZIPNAME" | grep -q "anykernel.sh" || {
+            echo "::error::ZIP tidak memuat anykernel.sh"; exit 1
+          }
+          unzip -l "$ZIPNAME" | grep -q "META-INF/com/google/android/update-binary" || {
+            echo "::error::ZIP tidak memuat update-binary (bukan TWRP package)"; exit 1
+          }
+          if unzip -l "$ZIPNAME" | grep -q "\.git/"; then
+            echo "::error::ZIP masih memuat direktori .git/"; exit 1
+          fi
+          sha256sum "$ZIPNAME" > SHA256SUMS-${{ matrix.suffix }}.txt
+          cat SHA256SUMS-${{ matrix.suffix }}.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ReSukiSU-M51-flashable
-          path: ${{ env.ZIPNAME }}
+          name: ReSukiSU-Kernel-M51-${{ matrix.suffix }}
+          path: |
+            ${{ env.ZIPNAME }}
+            SHA256SUMS-${{ matrix.suffix }}.txt
+            config-${{ matrix.suffix }}.txt
+            build-${{ matrix.suffix }}.log
+            build-info-${{ matrix.suffix }}.txt
+            anykernel-audit-${{ matrix.suffix }}.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v-${{ github.run_number }}-${{ github.sha }}
-          name: "ReSukiSU Kernel M51 build #${{ github.run_number }}"
-          files: ${{ env.ZIPNAME }}
+          tag_name: v-${{ github.run_number }}-${{ matrix.suffix }}-${{ github.sha }}
+          name: "ReSukiSU Kernel M51 [${{ matrix.suffix }}] build #${{ github.run_number }}"
+          files: |
+            ${{ env.ZIPNAME }}
+            SHA256SUMS-${{ matrix.suffix }}.txt
+            config-${{ matrix.suffix }}.txt
+            build-info-${{ matrix.suffix }}.txt
+            anykernel-audit-${{ matrix.suffix }}.txt
           body: |
-            Auto build. Flash via TWRP/OrangeFox, tanpa wipe data.
+            Device: Samsung Galaxy M51 (SM-M515F, codename m51)
+            Kernel: Linux 4.14 Non-GKI (SM7150)
+            Branch: ${{ matrix.branch }}
+            Root: ReSukiSU (submodule KernelSU @ ReSukiSU/ReSukiSU)
+            Recovery: TWRP
+            Packaging: AnyKernel3 (non-slot, block=/dev/block/bootdevice/by-name/boot)
+            Defconfig: ${{ matrix.defconfig }}
+
+            Flash via TWRP. Tanpa wipe data.
+            Verifikasi SHA256 sebelum flash.

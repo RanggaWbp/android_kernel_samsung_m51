@@ -207,6 +207,7 @@ sdmmagpie-usbc-idp-overlay.dtbo-base := sdmmagpie.dtb
 sdmmagpie-dual-display-idp-overlay.dtbo-base := sdmmagpie.dtb
 else
 dtb-$(CONFIG_ARCH_SDMMAGPIE)	+= sdmmagpie-rumi.dtb \
+	sdmmagpie.dtb \
 	sdmmagpie-idp.dtb \
 	sdmmagpie-atp.dtb \
 	sdmmagpie-qrd.dtb \
