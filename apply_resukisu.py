@@ -167,14 +167,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True)
     ap.add_argument("--defconfig", default="m51", help="substring nama defconfig target device")
+    ap.add_argument("--skip", default="", help="comma-separated hook yang dilewati (sudah dipatch manual), mis: execve,sys_reboot")
     args = ap.parse_args()
     repo = os.path.abspath(args.repo)
+    skip = set(s.strip() for s in args.skip.split(",") if s.strip())
 
     add_submodule(repo)
     hook_stat(repo)
-    hook_execve(repo)
+    if "execve" not in skip:
+        hook_execve(repo)
     hook_faccessat(repo)
-    hook_reboot(repo)
+    if "sys_reboot" not in skip:
+        hook_reboot(repo)
     hook_setresuid(repo)
     hook_sys_read(repo)
     selinux_exports(repo)
