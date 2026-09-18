@@ -219,7 +219,11 @@ jobs:
               print("::error::Tidak ada DTB ter-append ke Image.gz-dtb. "
                     "Boot image M51 akan invalid -> jangan pakai untuk flash.")
               sys.exit(1)
-          print("OK: minimal satu DTB ter-append ke Image.gz-dtb")
+          if b"qcom,sm7150" not in d and b"sdmmagpie" not in d:
+              print("::error::DTB ter-append tapi bukan tree SM7150/sdmmagpie — "
+                    "device tree salah untuk M51.")
+              sys.exit(1)
+          print("OK: DTB SM7150/sdmmagpie ter-append ke Image.gz-dtb")
           PYEOF
 
           echo "path=$IMG" >> "$GITHUB_OUTPUT"
