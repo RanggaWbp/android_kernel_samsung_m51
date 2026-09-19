@@ -19,12 +19,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 3 varian defconfig, semuanya dibangun dari branch `ten`.
+          # Tujuannya memberi client beberapa pilihan konfigurasi untuk
+          # diuji, karena perbedaan antar defconfig menyangkut hardware
+          # (charging/motor/overlayfs) yang tidak bisa diverifikasi tanpa
+          # device. Branch `ten-stock` tetap ada sebagai basis source
+          # stock dan punya workflow sendiri.
           - branch: ten
             defconfig: m51_eur_open_defconfig
             suffix: ten
-          - branch: ten-stock
-            defconfig: m51_eur_open_defconfig
+          - branch: ten
+            defconfig: stock_m51_defconfig
             suffix: ten-stock
+          - branch: ten
+            defconfig: m51_full_defconfig
+            suffix: ten-full
 
     steps:
       - name: Checkout kernel (${{ matrix.branch }})
